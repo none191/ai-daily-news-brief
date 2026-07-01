@@ -71,6 +71,10 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-gemini}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET}
+      LINE_TO_ID: ${LINE_TO_ID}
+      APP_URL: ${APP_URL}
     ports:
       - "127.0.0.1:3000:3000"   # เข้าผ่าน cloudflared, ไม่ expose ตรงสู่ internet
     volumes:
@@ -98,10 +102,10 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-gemini}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      LINE_NOTIFY_TOKEN: ${LINE_NOTIFY_TOKEN}
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET}
+      LINE_TO_ID: ${LINE_TO_ID}
+      APP_URL: ${APP_URL}
     networks:
       - news-internal
     # worker ตัวนี้รัน BullMQ consumer (listen queue ตลอดเวลา)

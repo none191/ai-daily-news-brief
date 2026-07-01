@@ -10,8 +10,17 @@ import { getPipelineQueue } from "@/lib/queue";
 
 export const dynamic = "force-dynamic";
 
+function assertLineRuntimeConfig() {
+  const missing = ["LINE_CHANNEL_ACCESS_TOKEN", "LINE_TO_ID", "APP_URL"].filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    throw new Error(`${missing.join(", ")} ไม่ได้ตั้งค่าไว้`);
+  }
+}
+
 export async function POST() {
   try {
+    assertLineRuntimeConfig();
+
     // เช็คว่ามี DailyBrief วันนี้พร้อมส่งหรือยัง
     const now = new Date();
     const briefDate = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));

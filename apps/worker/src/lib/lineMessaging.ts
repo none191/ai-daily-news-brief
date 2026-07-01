@@ -10,11 +10,13 @@ const LINE_API_URL = "https://api.line.me/v2/bot/message/push";
 function getConfig() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   const to = process.env.LINE_TO_ID; // userId หรือ groupId ที่จะส่งหา
+  const appUrl = process.env.APP_URL;
 
   if (!token) throw new Error("LINE_CHANNEL_ACCESS_TOKEN ไม่ได้ตั้งค่าไว้");
   if (!to) throw new Error("LINE_TO_ID ไม่ได้ตั้งค่าไว้ (userId หรือ groupId ที่จะรับข้อความ)");
+  if (!appUrl) throw new Error("APP_URL ไม่ได้ตั้งค่าไว้");
 
-  return { token, to };
+  return { token, to, appUrl };
 }
 
 // ---- Flex Message builders ----
@@ -126,9 +128,9 @@ function makeCarousel(articles: ArticleForFlex[], startRank = 1) {
 /**
  * ส่วนแรก: ข้อความสรุปภาพรวมประจำวัน (text)
  */
-function makeDailySummaryText(date: Date, totalFetched: number, totalSummarized: number): string {
+function makeDailySummaryText(date: Date, totalFetched: number, totalSummarized: number, appUrl: string): string {
   const dateStr = date.toLocaleDateString("th-TH", { dateStyle: "full" });
-  return `📰 AI Daily News Brief\n${dateStr}\n\nดึงข่าวมา ${totalFetched} ชิ้น · สรุปแล้ว ${totalSummarized} ชิ้น`;
+  return `📰 AI Daily News Brief\n${dateStr}\n\nดึงข่าวมา ${totalFetched} ชิ้น · สรุปแล้ว ${totalSummarized} ชิ้น\n\nDashboard: ${appUrl}`;
 }
 
 // ---- Public API ----
@@ -151,13 +153,13 @@ export interface DailyBriefPayload {
  * ในแบบที่ preserves order ได้แน่นอน เลยแยก push แต่ละ message
  */
 export async function sendDailyBriefToLine(payload: DailyBriefPayload): Promise<void> {
-  const { token, to } = getConfig();
+  const { token, to, appUrl } = getConfig();
 
   const messages = [
     // 1) text สรุปวัน
     {
       type: "text",
-      text: makeDailySummaryText(payload.briefDate, payload.totalFetched, payload.totalSummarized),
+      text: makeDailySummaryText(payload.briefDate, payload.totalFetched, payload.totalSummarized, appUrl),
     },
 
     // 2) ข่าวเด่นรวม — carousel สูงสุด 10 bubble (LINE Flex Carousel limit)
