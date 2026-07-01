@@ -4,10 +4,10 @@
   "dependencies": {
     "@prisma/client": "^5.20.0",
     "rss-parser": "^3.13.0",
-    "bullmq": "^5.13.0"
+    "bullmq": "^5.13.0",
+    "prisma": "^5.20.0"
   },
   "devDependencies": {
-    "prisma": "^5.20.0",
     "typescript": "^5.6.0",
     "ts-node": "^10.9.0",
     "tsx": "^4.19.0",
@@ -19,7 +19,7 @@
     "scheduler": "node dist/scheduler.js",
     "dev:worker": "tsx watch src/worker.ts",
     "dev:scheduler": "tsx watch src/scheduler.ts",
-    "seed": "ts-node src/seeds/rssSources.ts",
+    "seed": "node dist/seeds/rssSources.js",
     "pipeline:run": "ts-node src/jobs/runDailyPipeline.ts",
     "fetch:run": "ts-node -e \"require('./src/jobs/fetchRss').runFetchRssJob().then(r=>{console.log(r);process.exit(0)})\"",
     "prisma:generate": "prisma generate",

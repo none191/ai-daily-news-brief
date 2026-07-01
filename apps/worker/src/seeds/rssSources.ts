@@ -1,8 +1,8 @@
 // ============================================================
 // apps/worker/src/seeds/rssSources.ts
 // Seed: Category + NewsSource ตัวอย่างสำหรับทดสอบ pipeline
-// รัน: npx ts-node src/seeds/rssSources.ts
-//   หรือเพิ่ม script "seed": "ts-node src/seeds/rssSources.ts" ใน package.json
+// Docker/runtime ใช้ JavaScript ที่ compile แล้วผ่าน script:
+//   npm run build && npm run seed
 // ============================================================
 
 import { PrismaClient } from "@prisma/client";

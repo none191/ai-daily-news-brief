@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ============================================================
 # AI Daily News Brief — Docker Compose
 # Target: UGREEN DXP2800 NAS
@@ -109,6 +107,46 @@ services:
     networks:
       - news-internal
     # worker ตัวนี้รัน BullMQ consumer (listen queue ตลอดเวลา)
+
+  # ----------------------------------------------------------
+  # migrate — one-off Prisma migration runner
+  # Run with: docker compose run --rm migrate
+  # ----------------------------------------------------------
+  migrate:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile
+    container_name: news-migrate
+    profiles:
+      - tools
+    command: ["npm", "run", "prisma:migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsapp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-news_brief}
+    networks:
+      - news-internal
+
+  # ----------------------------------------------------------
+  # seed — one-off seed runner using compiled JavaScript
+  # Run with: docker compose run --rm seed
+  # ----------------------------------------------------------
+  seed:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile
+    container_name: news-seed
+    profiles:
+      - tools
+    command: ["npm", "run", "seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsapp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-news_brief}
+    networks:
+      - news-internal
 
   # ----------------------------------------------------------
   # scheduler — ยิง job ทุกวันตามเวลา (06:00 - 07:05)

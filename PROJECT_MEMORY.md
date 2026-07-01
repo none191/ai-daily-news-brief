@@ -5,7 +5,7 @@
 - `apps/web` builds with `npm run build` using Next.js standalone output.
 - `apps/worker` builds with `npm run build` and emits `dist/worker.js` and `dist/scheduler.js`.
 - Prisma schemas in root, `apps/web/prisma`, and `apps/worker/prisma` are currently identical.
-- Prisma migrations currently exist under `apps/web/prisma/migrations`.
+- Prisma migrations exist under both `apps/web/prisma/migrations` and `apps/worker/prisma/migrations` so the worker Docker image can run `prisma migrate deploy` without host mounts.
 - LINE Messaging API runtime config is centralized through `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_CHANNEL_SECRET`, `LINE_TO_ID`, and `APP_URL`.
 
 ## Decisions
@@ -16,6 +16,9 @@
 - `news-worker` is the service that executes notify jobs; `news-scheduler` only enqueues the full pipeline repeatable job.
 - `news-web` also receives LINE env for webhook signature verification and dashboard-triggered notification enqueue flows.
 - `POST /api/notify` performs a LINE runtime config preflight before enqueueing `notify-only`; the worker performs the same send-time config check before calling LINE.
+- `apps/worker` is the operational Docker image for one-off `migrate` and `seed` compose services.
+- Runtime seed uses compiled JavaScript (`node dist/seeds/rssSources.js`), not `ts-node`.
+- Baseline migration `20260629_init` creates the full current schema, including `BriefStatus.COMPLETED`; later additive migrations are idempotent for empty database deploys.
 
 ## Verification
 
@@ -23,11 +26,13 @@
 - `npx prisma generate` completed in both apps.
 - `DATABASE_URL=postgresql://user:pass@localhost:5432/db npx prisma validate` completed in both apps.
 - `npm run build` completed in both apps.
-- `docker compose build` could not be run in the current environment because `docker` is not installed or not available on `PATH`.
 - `npm audit --audit-level=moderate` reports 0 vulnerabilities for `apps/worker`.
 - `npm audit --audit-level=moderate` reports 5 vulnerabilities for `apps/web`; npm's available fix requires `--force` and breaking upgrades to Next/eslint tooling, so it was left unchanged during build-only work.
 - After the LINE runtime config update, `npm run build` completed in both apps again.
+- After the Docker migration/seed update, `docker compose build` completed for `news-web`, `news-worker`, and `scheduler`.
+- A temporary empty PostgreSQL container was used to verify `npm run prisma:migrate` from the built worker image; all 4 migrations applied successfully without mounting schema from host.
+- The same temporary database was used to verify `npm run seed` from the built worker image; it seeded 8 categories, 6 sources, and 14 keywords.
 
 ## Next Step
 
-- Run `docker compose build` on a machine/session with Docker available.
+- Run `docker compose run --rm migrate` and then `docker compose run --rm seed` in the target deployment environment when initializing a fresh database.
