@@ -21,6 +21,7 @@
     "dev:scheduler": "tsx watch src/scheduler.ts",
     "seed": "node dist/seeds/rssSources.js",
     "pipeline:run": "ts-node src/jobs/runDailyPipeline.ts",
+    "pipeline:run:prod": "node -e \"require('./dist/jobs/runDailyPipeline').runDailyPipeline().then(()=>process.exit(0)).catch((e)=>{console.error(e);process.exit(1)})\"",
     "fetch:run": "ts-node -e \"require('./src/jobs/fetchRss').runFetchRssJob().then(r=>{console.log(r);process.exit(0)})\"",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy"

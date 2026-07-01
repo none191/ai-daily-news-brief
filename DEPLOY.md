@@ -51,8 +51,11 @@ AI_PROVIDER=gemini              # หรือ openai
 LINE_CHANNEL_ACCESS_TOKEN=<token>
 LINE_CHANNEL_SECRET=<secret>
 LINE_TO_ID=                     # ยังว่างไว้ก่อน — จะได้จากขั้นตอน 7
+APP_URL=https://news.yourdomain.com
 CLOUDFLARE_TUNNEL_TOKEN=        # ยังว่างไว้ก่อน — จะได้จากขั้นตอน 5
 ```
+
+> `APP_URL` ใช้เป็นลิงก์ Dashboard ที่ส่งเข้า LINE ด้วย ต้องเปลี่ยนเป็น public HTTPS domain ตอน production
 
 ---
 
@@ -63,10 +66,10 @@ CLOUDFLARE_TUNNEL_TOKEN=        # ยังว่างไว้ก่อน —
 docker compose build
 
 # รัน migration สร้างตาราง
-docker compose run --rm news-web npx prisma migrate deploy
+docker compose --profile tools run --rm migrate
 
 # seed ข้อมูลตั้งต้น (categories + RSS sources + keywords)
-docker compose run --rm news-worker npm run seed
+docker compose --profile tools run --rm seed
 
 # start ทุก service (ไม่รวม cloudflared เพราะอยู่ profile "tunnel")
 docker compose up -d
@@ -161,7 +164,7 @@ docker compose logs cloudflared
 
 ```bash
 # รัน pipeline แบบ manual ดูว่าทุก step ทำงานได้
-docker compose run --rm news-worker npm run pipeline:run
+docker compose run --rm news-worker npm run pipeline:run:prod
 
 # ดู output — ควรเห็น step ครบ 8 ขั้นจาก fetch ถึง notify
 # [pipeline] 1/8 fetchRss...
@@ -185,7 +188,7 @@ docker compose ps scheduler
 
 # ดู log ของ scheduler
 docker compose logs scheduler
-# ควรเห็น: "registered cron "0 6 * * *" -> queue "daily-pipeline""
+# ควรเห็น: "registered cron "0 6 * * *" -> job "run-full-pipeline" on queue "daily-pipeline""
 ```
 
 ---
@@ -194,8 +197,8 @@ docker compose logs scheduler
 
 ### Infrastructure
 - [ ] Docker Compose build สำเร็จ (`docker compose build`)
-- [ ] Migration รันแล้ว (`prisma migrate deploy`)
-- [ ] Seed รันแล้ว (`npm run seed`)
+- [ ] Migration รันแล้ว (`docker compose --profile tools run --rm migrate`)
+- [ ] Seed รันแล้ว (`docker compose --profile tools run --rm seed`)
 - [ ] ทุก container status = running/healthy (`docker compose ps`)
 - [ ] Cloudflare Tunnel online (เห็น "Registered tunnel connection")
 - [ ] เข้า `https://news.yourdomain.com` ได้จากเน็ตนอกบ้าน
@@ -206,7 +209,7 @@ docker compose logs scheduler
 - [ ] ทดสอบ push message ถึง LINE ได้จริง
 
 ### Pipeline
-- [ ] `npm run pipeline:run` ผ่านครบ 8 step
+- [ ] `docker compose run --rm news-worker npm run pipeline:run:prod` ผ่านครบ 8 step
 - [ ] Dashboard โชว์ข้อมูลจริงที่ `/dashboard`
 - [ ] ปุ่ม "Run Daily Pipeline" ทำงานได้
 - [ ] ปุ่ม "ส่ง LINE" ทำงานได้
@@ -233,8 +236,8 @@ docker compose restart news-worker
 docker compose build news-web && docker compose up -d news-web
 docker compose build news-worker scheduler && docker compose up -d news-worker scheduler
 
-# เพิ่ม RSS source ใหม่จาก CLI
-docker compose run --rm news-worker npx ts-node src/seeds/rssSources.ts
+# seed ข้อมูลตั้งต้นซ้ำแบบ idempotent
+docker compose --profile tools run --rm seed
 
 # stop ทั้ง stack (ข้อมูลใน volume ยังอยู่)
 docker compose down

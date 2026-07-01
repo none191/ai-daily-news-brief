@@ -14,11 +14,14 @@
 - `apps/worker/Dockerfile` generates Prisma Client before pruning dev dependencies so the production image keeps runtime dependencies without relying on `npx` after the Prisma CLI has been removed.
 - `apps/web/public/.gitkeep` keeps the `public` directory present because the web Dockerfile copies `/app/public` in the runner stage.
 - `news-worker` is the service that executes notify jobs; `news-scheduler` only enqueues the full pipeline repeatable job.
+- `news-scheduler` enqueues repeatable jobs named `run-full-pipeline`, matching both dashboard manual runs and the worker switch case.
 - `news-web` also receives LINE env for webhook signature verification and dashboard-triggered notification enqueue flows.
 - `POST /api/notify` performs a LINE runtime config preflight before enqueueing `notify-only`; the worker performs the same send-time config check before calling LINE.
 - `apps/worker` is the operational Docker image for one-off `migrate` and `seed` compose services.
 - Runtime seed uses compiled JavaScript (`node dist/seeds/rssSources.js`), not `ts-node`.
+- Runtime manual pipeline uses compiled JavaScript via `npm run pipeline:run:prod`, not `ts-node` or `src/`.
 - Baseline migration `20260629_init` creates the full current schema, including `BriefStatus.COMPLETED`; later additive migrations are idempotent for empty database deploys.
+- LINE webhook signature verification rejects requests in production if `LINE_CHANNEL_SECRET` is missing.
 
 ## Verification
 
@@ -32,6 +35,9 @@
 - After the Docker migration/seed update, `docker compose build` completed for `news-web`, `news-worker`, and `scheduler`.
 - A temporary empty PostgreSQL container was used to verify `npm run prisma:migrate` from the built worker image; all 4 migrations applied successfully without mounting schema from host.
 - The same temporary database was used to verify `npm run seed` from the built worker image; it seeded 8 categories, 6 sources, and 14 keywords.
+- Review-fix verification ran `docker compose down -v`, `docker compose up -d postgres redis`, `docker compose --profile tools run --rm migrate`, `docker compose --profile tools run --rm seed`, `docker compose up -d`, and `docker compose ps` successfully.
+- `news-web` healthcheck reported healthy after full stack startup.
+- BullMQ repeatable jobs were queried from the scheduler image and returned `run-full-pipeline`.
 
 ## Next Step
 

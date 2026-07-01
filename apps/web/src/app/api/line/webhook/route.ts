@@ -24,8 +24,12 @@ export const dynamic = "force-dynamic";
 function verifyLineSignature(body: string, signature: string | null): boolean {
   const secret = process.env.LINE_CHANNEL_SECRET;
   if (!secret) {
-    console.warn("[webhook] LINE_CHANNEL_SECRET ไม่ได้ตั้งค่า — ข้าม signature verification");
-    return true; // ถ้าไม่ตั้ง secret ให้ผ่านไปก่อน (dev mode)
+    if (process.env.NODE_ENV === "production") {
+      console.error("[webhook] LINE_CHANNEL_SECRET is required in production; rejecting request");
+      return false;
+    }
+    console.warn("[webhook] LINE_CHANNEL_SECRET is not set; skipping signature verification in development only");
+    return true;
   }
   if (!signature) return false;
 
@@ -34,7 +38,11 @@ function verifyLineSignature(body: string, signature: string | null): boolean {
     .update(body)
     .digest("base64");
 
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  const expectedBuffer = Buffer.from(expected);
+  const signatureBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== signatureBuffer.length) return false;
+
+  return crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
 }
 
 // ---- POST: รับ Webhook event จาก LINE ----

@@ -13,12 +13,13 @@ import { Queue } from "bullmq";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://redis:6379";
 const QUEUE_NAME = "daily-pipeline";
+const JOB_NAME = "run-full-pipeline";
+const LEGACY_JOB_NAME = "daily-pipeline-trigger";
 
 // cron pattern: นาที ชั่วโมง วัน เดือน วัน-ในสัปดาห์
 // "0 6 * * *" = ทุกวัน 06:00 (ใช้ TZ env ของ container กำหนด timezone จริง
 // docker-compose ตั้ง TZ=Asia/Bangkok ให้ container นี้แล้ว)
 const CRON_PATTERN = process.env.PIPELINE_CRON ?? "0 6 * * *";
-const REPEATABLE_JOB_KEY_NAME = "daily-pipeline-trigger";
 
 async function main() {
   const queue = new Queue(QUEUE_NAME, { connection: { url: REDIS_URL } as any });
@@ -27,14 +28,14 @@ async function main() {
   // deploy ใหม่ แต่ของเก่ายังค้างอยู่ใน Redis กลายเป็นรัน 2 รอบ)
   const existing = await queue.getRepeatableJobs();
   for (const job of existing) {
-    if (job.name === REPEATABLE_JOB_KEY_NAME) {
+    if (job.name === JOB_NAME || job.name === LEGACY_JOB_NAME) {
       await queue.removeRepeatableByKey(job.key);
       console.log(`[scheduler] removed old repeatable job: ${job.key}`);
     }
   }
 
   await queue.add(
-    REPEATABLE_JOB_KEY_NAME,
+    JOB_NAME,
     {},
     {
       repeat: { pattern: CRON_PATTERN },
@@ -43,7 +44,7 @@ async function main() {
     }
   );
 
-  console.log(`[scheduler] registered cron "${CRON_PATTERN}" -> queue "${QUEUE_NAME}"`);
+  console.log(`[scheduler] registered cron "${CRON_PATTERN}" -> job "${JOB_NAME}" on queue "${QUEUE_NAME}"`);
   console.log("[scheduler] idle, waiting for next trigger time...");
 
   // process นี้แค่ "ตั้งเวลา" — ไม่ต้อง loop เอง BullMQ จัดการ repeat ผ่าน Redis
