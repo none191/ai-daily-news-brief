@@ -15,6 +15,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { BriefSection } from "@prisma/client";
 
+export const dynamic = "force-dynamic";
+
 // แปลง NewsArticle ที่ query มาให้เป็นรูปแบบที่ frontend ใช้ตรงๆ ได้เลย
 function serializeArticle(article: any) {
   return {

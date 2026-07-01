@@ -11,6 +11,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getPipelineQueue } from "@/lib/queue";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(_req: Request, { params }: { params: { id: string } }) {
   try {
     const source = await prisma.newsSource.findUnique({ where: { id: params.id } });

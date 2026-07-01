@@ -17,6 +17,8 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 // ตรวจลายเซ็น LINE signature เพื่อกัน request ปลอม
 // LINE ส่ง X-Line-Signature header มาเป็น HMAC-SHA256 ของ body
 function verifyLineSignature(body: string, signature: string | null): boolean {

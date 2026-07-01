@@ -9,6 +9,8 @@
 import { NextResponse } from "next/server";
 import { getPipelineQueue } from "@/lib/queue";
 
+export const dynamic = "force-dynamic";
+
 const JOB_NAME = "run-full-pipeline" as const;
 
 export async function POST() {

@@ -8,6 +8,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getPipelineQueue } from "@/lib/queue";
 
+export const dynamic = "force-dynamic";
+
 export async function POST() {
   try {
     // เช็คว่ามี DailyBrief วันนี้พร้อมส่งหรือยัง

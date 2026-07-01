@@ -34,8 +34,9 @@ RUN apk add --no-cache libc6-compat openssl
 
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
-RUN npm ci --omit=dev
+RUN npm ci
 RUN npx prisma generate
+RUN npm prune --omit=dev
 
 # ---------- Stage 4: runner ----------
 FROM node:20-alpine AS runner

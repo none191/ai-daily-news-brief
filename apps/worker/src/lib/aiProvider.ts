@@ -13,6 +13,28 @@ export interface SummaryResult {
   shouldFollowUp: boolean;
 }
 
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: string }>;
+    };
+  }>;
+  usageMetadata?: {
+    totalTokenCount?: number;
+  };
+};
+
+type OpenAIChatCompletionResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+  }>;
+  usage?: {
+    total_tokens?: number;
+  };
+};
+
 const SYSTEM_PROMPT = `คุณเป็นนักวิเคราะห์ข่าวภาษาไทยมือมืออาชีพ
 หน้าที่ของคุณคือสรุปข่าวให้กระชับ ตรงประเด็น เป็นกลาง ไม่ใส่อารมณ์
 ตอบกลับเป็น JSON เท่านั้น ห้ามมีคำอธิบายอื่น ห้ามมี markdown code fence
@@ -80,7 +102,7 @@ async function callGemini(
     throw new Error(`Gemini API error: ${res.status} ${await res.text()}`);
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as GeminiGenerateContentResponse;
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   const tokensUsed = data?.usageMetadata?.totalTokenCount ?? null;
 
@@ -118,7 +140,7 @@ async function callOpenAI(
     throw new Error(`OpenAI API error: ${res.status} ${await res.text()}`);
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as OpenAIChatCompletionResponse;
   const text = data?.choices?.[0]?.message?.content ?? "";
   const tokensUsed = data?.usage?.total_tokens ?? null;
 
