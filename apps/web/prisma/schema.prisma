@@ -1,0 +1,349 @@
+// ============================================================
+// AI Daily News Brief — Prisma Schema
+// Stack: PostgreSQL + Prisma
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------------
+
+enum ArticleStatus {
+  NEW           // ดึงมาใหม่ ยังไม่ผ่านขั้นตอนอะไร
+  DUPLICATE     // ตรวจแล้วว่าซ้ำกับข่าวอื่น
+  CLASSIFIED    // ผ่านการแยกหมวดแล้ว
+  SCORED        // ให้คะแนนความสำคัญแล้ว
+  SELECTED      // ถูกเลือกเป็นข่าวเด่น
+  SUMMARIZED    // AI สรุปแล้ว
+  PUBLISHED     // ถูกใส่ใน Daily Brief แล้ว
+  ARCHIVED      // เก่าเกินไป ไม่ใช้แล้ว
+}
+
+enum BriefSection {
+  TOP_OVERALL     // ข่าวเด่นรวม
+  TOP_CATEGORY    // ข่าวเด่นแยกหมวด
+  FOLLOW_UP       // ข่าวที่ควรติดตามต่อ
+}
+
+enum BriefStatus {
+  PENDING
+  GENERATING
+  READY
+  COMPLETED   // summarize เสร็จแล้ว พร้อมส่ง notify
+  SENT
+  FAILED
+}
+
+enum NotificationChannel {
+  EMAIL
+  LINE
+  DASHBOARD
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum PipelineStep {
+  FETCH
+  DEDUPE
+  CLASSIFY
+  SCORE
+  SELECT
+  SUMMARIZE
+  GENERATE_BRIEF
+  NOTIFY
+}
+
+enum PipelineStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+// ------------------------------------------------------------
+// CATEGORY (หมวดข่าว — เก็บเป็นตารางแทน hardcode enum
+// เพื่อให้พี่เพิ่ม/ลบ/เปลี่ยนชื่อหมวดได้จาก UI โดยไม่ต้อง migrate)
+// ------------------------------------------------------------
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique           // เช่น "เศรษฐกิจ / ธุรกิจ"
+  slug        String   @unique           // เช่น "economy-business"
+  sortOrder   Int      @default(0)       // ลำดับแสดงผลบน dashboard
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  sources     NewsSource[]
+  articles    NewsArticle[]
+  keywords    Keyword[]
+
+  @@map("categories")
+}
+
+// ------------------------------------------------------------
+// NEWS SOURCE (แหล่งข่าว / RSS feed)
+// ------------------------------------------------------------
+
+model NewsSource {
+  id              String   @id @default(cuid())
+  name            String                      // ชื่อสำนักข่าว
+  rssUrl          String   @unique
+  defaultCategoryId String?
+  defaultCategory Category? @relation(fields: [defaultCategoryId], references: [id])
+
+  reliabilityScore Int     @default(1)        // ใช้บวกคะแนนตอน scoring (เช่น 1-3)
+  isActive        Boolean  @default(true)
+
+  lastFetchedAt   DateTime?
+  lastFetchStatus String?                      // "success" | "error" | message
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  articles        NewsArticle[]
+  fetchLogs       PipelineLog[]
+
+  @@map("news_sources")
+}
+
+// ------------------------------------------------------------
+// KEYWORD (สำหรับ keyword scoring แยกตามหมวด)
+// ------------------------------------------------------------
+
+model Keyword {
+  id          String    @id @default(cuid())
+  term        String                          // คำ/keyword สำคัญ
+  weight      Int       @default(3)           // คะแนนที่บวกถ้าเจอคำนี้
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  @@unique([term, categoryId])
+  @@map("keywords")
+}
+
+// ------------------------------------------------------------
+// NEWS ARTICLE (ข่าวที่ดึงมาแต่ละชิ้น)
+// ------------------------------------------------------------
+
+model NewsArticle {
+  id              String        @id @default(cuid())
+
+  sourceId        String
+  source          NewsSource    @relation(fields: [sourceId], references: [id])
+
+  title           String
+  link            String        @unique         // ใช้กันการดึงซ้ำจาก feed เดิม
+  imageUrl        String?                         // รูปปกข่าว ดึงจาก RSS enclosure/media:content
+  rawContent      String?       @db.Text
+  contentHash     String                          // hash(title+content) เพื่อ dedup ข้ามแหล่ง
+  publishedAt     DateTime
+  fetchedAt       DateTime      @default(now())
+
+  categoryId      String?
+  category        Category?     @relation(fields: [categoryId], references: [id])
+
+  status          ArticleStatus @default(NEW)
+
+  // --- Dedup ---
+  isDuplicate     Boolean       @default(false)
+  duplicateOfId   String?
+  duplicateOf     NewsArticle?  @relation("DuplicateOf", fields: [duplicateOfId], references: [id])
+  duplicates      NewsArticle[] @relation("DuplicateOf")
+  clusterId       String?                          // กลุ่มข่าวเรื่องเดียวกันจากหลายแหล่ง
+  cluster         ArticleCluster? @relation(fields: [clusterId], references: [id])
+
+  // --- Scoring ---
+  score           ArticleScore?
+
+  // --- AI Summary ---
+  summary         AISummary?
+
+  // --- Brief placement ---
+  briefItems      DailyBriefItem[]
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([contentHash])
+  @@index([publishedAt])
+  @@index([status])
+  @@index([categoryId])
+  @@map("news_articles")
+}
+
+// ------------------------------------------------------------
+// ARTICLE CLUSTER (กลุ่มข่าวเดียวกันที่มาจากหลายสำนักข่าว
+// ใช้สำหรับให้คะแนนบวก "มีหลายแหล่งพูดถึงเรื่องเดียวกัน")
+// ------------------------------------------------------------
+
+model ArticleCluster {
+  id          String        @id @default(cuid())
+  topic       String                              // สรุปหัวข้อกลุ่มสั้นๆ (อาจมาจาก AI)
+  createdAt   DateTime      @default(now())
+
+  articles    NewsArticle[]
+
+  @@map("article_clusters")
+}
+
+// ------------------------------------------------------------
+// ARTICLE SCORE (breakdown คะแนนความสำคัญ — แยกตาราง
+// เพื่อให้ปรับ/ดู logic การให้คะแนนได้ง่าย และคำนวณซ้ำได้)
+// ------------------------------------------------------------
+
+model ArticleScore {
+  id               String      @id @default(cuid())
+
+  articleId        String      @unique
+  article          NewsArticle @relation(fields: [articleId], references: [id])
+
+  recencyScore     Int         @default(0)   // ข่าวใหม่ภายใน 24 ชม. +2
+  keywordScore     Int         @default(0)   // มี keyword สำคัญ +3
+  sourceScore      Int         @default(0)   // มาจากแหล่งข่าวหลัก +2
+  crossSourceScore Int         @default(0)   // หลายแหล่งพูดถึงเรื่องเดียวกัน +3
+  categoryScore    Int         @default(0)   // อยู่ในหมวดที่สนใจ +2
+
+  totalScore       Int         @default(0)   // sum ของด้านบน
+
+  scoredAt         DateTime    @default(now())
+
+  @@map("article_scores")
+}
+
+// ------------------------------------------------------------
+// AI SUMMARY (ผลสรุปจาก AI ต่อข่าว 1 ชิ้น)
+// ------------------------------------------------------------
+
+model AISummary {
+  id              String      @id @default(cuid())
+
+  articleId       String      @unique
+  article         NewsArticle @relation(fields: [articleId], references: [id])
+
+  shortSummary    String      @db.Text    // สรุปสั้น 2-3 บรรทัด
+  detailedSummary String      @db.Text    // สรุปละเอียด
+  whyImportant    String?     @db.Text    // ทำไมข่าวนี้สำคัญ
+  impact          String?     @db.Text    // ผลกระทบต่อธุรกิจ/คนทั่วไป
+  followUpNote    String?     @db.Text    // สิ่งที่ควรติดตามต่อ
+  shouldFollowUp  Boolean     @default(false)
+
+  model           String                  // เช่น "gemini-1.5-pro", "gpt-4o-mini"
+  tokensUsed      Int?
+  generatedAt     DateTime    @default(now())
+
+  @@map("ai_summaries")
+}
+
+// ------------------------------------------------------------
+// DAILY BRIEF (สรุปข่าวรายวัน 1 ฉบับ)
+// ------------------------------------------------------------
+
+model DailyBrief {
+  id          String           @id @default(cuid())
+  briefDate   DateTime         @db.Date  @unique   // วันที่ของ brief (1 brief/วัน)
+  status      BriefStatus      @default(PENDING)
+
+  topOverallCount   Int        @default(5)
+  topCategoryCount  Int        @default(3)
+  followUpCount     Int        @default(3)
+
+  generatedAt DateTime?
+  createdAt   DateTime         @default(now())
+
+  items       DailyBriefItem[]
+  notifications NotificationLog[]
+
+  @@map("daily_briefs")
+}
+
+model DailyBriefItem {
+  id          String        @id @default(cuid())
+
+  briefId     String
+  brief       DailyBrief    @relation(fields: [briefId], references: [id])
+
+  articleId   String
+  article     NewsArticle   @relation(fields: [articleId], references: [id])
+
+  section     BriefSection                 // TOP_OVERALL / TOP_CATEGORY / FOLLOW_UP
+  categoryId  String?                       // ใช้เมื่อ section = TOP_CATEGORY
+  rank        Int           @default(0)     // ลำดับภายใน section
+
+  createdAt   DateTime      @default(now())
+
+  @@unique([briefId, articleId, section])
+  @@index([briefId, section])
+  @@map("daily_brief_items")
+}
+
+// ------------------------------------------------------------
+// NOTIFICATION LOG (ส่ง Email / LINE / แสดงผล Dashboard)
+// ------------------------------------------------------------
+
+model NotificationLog {
+  id          String               @id @default(cuid())
+
+  briefId     String
+  brief       DailyBrief           @relation(fields: [briefId], references: [id])
+
+  channel     NotificationChannel
+  status      NotificationStatus   @default(PENDING)
+  errorMessage String?
+
+  sentAt      DateTime?
+  createdAt   DateTime             @default(now())
+
+  @@map("notification_logs")
+}
+
+// ------------------------------------------------------------
+// LINE IDENTITY (เก็บ userId / groupId / roomId ที่ได้จาก Webhook
+// ใช้สำหรับ onboarding LINE_TO_ID)
+// ------------------------------------------------------------
+
+model LineIdentity {
+  id          String   @id @default(cuid())
+  lineId      String   @unique          // userId / groupId / roomId จาก LINE
+  type        String                    // "user" | "group" | "room"
+  label       String?                   // ชื่อที่พี่ตั้งเองเพื่อจำง่าย (แก้จาก UI ได้)
+  isActive    Boolean  @default(true)
+  lastSeenAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@map("line_identities")
+}
+
+// ใช้ debug ตอน scheduler รันอัตโนมัติ 06:00-07:05)
+// ------------------------------------------------------------
+
+model PipelineLog {
+  id          String          @id @default(cuid())
+
+  step        PipelineStep
+  status      PipelineStatus  @default(RUNNING)
+
+  sourceId    String?
+  source      NewsSource?     @relation(fields: [sourceId], references: [id])
+
+  itemsProcessed Int?         // จำนวนข่าวที่ประมวลผลใน step นี้
+  errorMessage   String?
+
+  startedAt   DateTime        @default(now())
+  finishedAt  DateTime?
+
+  @@index([step, startedAt])
+  @@map("pipeline_logs")
+}

@@ -1,0 +1,16 @@
+{
+  "name": "news-web",
+  "private": true,
+  "dependencies": {
+    "bullmq": "^5.13.0",
+    "@prisma/client": "^5.20.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy"
+  }
+}

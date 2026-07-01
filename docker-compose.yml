@@ -1,0 +1,157 @@
+version: "3.9"
+
+# ============================================================
+# AI Daily News Brief — Docker Compose
+# Target: UGREEN DXP2800 NAS
+# Services: news-web (Next.js), news-worker (BullMQ), postgres,
+#           redis, scheduler, cloudflared (remote access)
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL — ฐานข้อมูลข่าวหลัก
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: news-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-newsapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-news_brief}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"   # bind localhost only — เข้าถึงผ่าน cloudflared/lan เท่านั้น
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-newsapp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - news-internal
+
+  # ----------------------------------------------------------
+  # Redis — queue / background job (BullMQ)
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: news-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - news-internal
+
+  # ----------------------------------------------------------
+  # news-web — Next.js Dashboard + API Routes
+  # ----------------------------------------------------------
+  news-web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: news-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsapp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-news_brief}
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports:
+      - "127.0.0.1:3000:3000"   # เข้าผ่าน cloudflared, ไม่ expose ตรงสู่ internet
+    volumes:
+      - web_uploads:/app/public/uploads
+    networks:
+      - news-internal
+
+  # ----------------------------------------------------------
+  # news-worker — ดึงข่าว / dedup / classify / score / summarize
+  # ----------------------------------------------------------
+  news-worker:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile
+    container_name: news-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsapp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-news_brief}
+      REDIS_URL: redis://redis:6379
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LINE_NOTIFY_TOKEN: ${LINE_NOTIFY_TOKEN}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+    networks:
+      - news-internal
+    # worker ตัวนี้รัน BullMQ consumer (listen queue ตลอดเวลา)
+
+  # ----------------------------------------------------------
+  # scheduler — ยิง job ทุกวันตามเวลา (06:00 - 07:05)
+  # แยกจาก worker เพื่อให้ restart/scale worker ได้โดยไม่กระทบ schedule
+  # ----------------------------------------------------------
+  scheduler:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile
+    container_name: news-scheduler
+    restart: unless-stopped
+    command: ["node", "dist/scheduler.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-newsapp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-news_brief}
+      REDIS_URL: redis://redis:6379
+      TZ: Asia/Bangkok
+      # เวลาในตัว scheduler.js อ่านจาก cron pattern ภายในโค้ด
+      # 06:00 fetch, 06:10 dedupe, 06:20 classify, 06:30 score,
+      # 06:40 select, 06:50 summarize, 07:00 generate brief, 07:05 notify
+    networks:
+      - news-internal
+
+  # ----------------------------------------------------------
+  # cloudflared — เปิดใช้งานจากนอกบ้านแบบปลอดภัย (ไม่ต้อง open port)
+  # ----------------------------------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: news-cloudflared
+    restart: unless-stopped
+    profiles:
+      - tunnel
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    depends_on:
+      - news-web
+    networks:
+      - news-internal
+
+networks:
+  news-internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  web_uploads:
