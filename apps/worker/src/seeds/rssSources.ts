@@ -54,11 +54,19 @@ const SOURCES: { name: string; rssUrl: string; categorySlug: string; reliability
     categorySlug: "technology-ai",
     reliabilityScore: 3,
   },
+  // Reuters ปิดให้บริการ RSS free แล้ว (401) — ใช้ทดแทนด้านล่าง
+  // { name: "Reuters World News", rssUrl: "https://www.reuters.com/world/rss", ... },
   {
-    name: "Reuters World News",
-    rssUrl: "https://www.reuters.com/world/rss",
+    name: "BBC News Thai",
+    rssUrl: "https://feeds.bbci.co.uk/thai/rss.xml",
     categorySlug: "international",
     reliabilityScore: 3,
+  },
+  {
+    name: "Voice TV",
+    rssUrl: "https://voicetv.co.th/rss.xml",
+    categorySlug: "daily-highlight",
+    reliabilityScore: 2,
   },
 ];
 

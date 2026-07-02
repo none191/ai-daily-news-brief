@@ -2,6 +2,10 @@
 // apps/worker/src/lib/aiProvider.ts
 // เลือก AI provider จาก env AI_PROVIDER ("gemini" | "openai")
 // ส่งกลับ JSON โครงสร้างเดียวกันไม่ว่าจะใช้ provider ไหน
+//
+// Rate limit handling:
+//   Gemini free tier = 5 req/min → retry with backoff เมื่อเจอ 429
+//   parse JSON ล้มเหลว → retry 1 ครั้งทันที
 // ============================================================
 
 export interface SummaryResult {
@@ -15,24 +19,14 @@ export interface SummaryResult {
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
-    content?: {
-      parts?: Array<{ text?: string }>;
-    };
+    content?: { parts?: Array<{ text?: string }> };
   }>;
-  usageMetadata?: {
-    totalTokenCount?: number;
-  };
+  usageMetadata?: { totalTokenCount?: number };
 };
 
 type OpenAIChatCompletionResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string | null;
-    };
-  }>;
-  usage?: {
-    total_tokens?: number;
-  };
+  choices?: Array<{ message?: { content?: string | null } }>;
+  usage?: { total_tokens?: number };
 };
 
 const SYSTEM_PROMPT = `คุณเป็นนักวิเคราะห์ข่าวภาษาไทยมือมืออาชีพ
@@ -59,10 +53,8 @@ ${content.slice(0, 6000)}
 }
 
 function parseJsonResponse(raw: string): SummaryResult {
-  // กันกรณี AI ใส่ ```json ... ``` มาทั้งที่สั่งห้ามแล้ว
   const cleaned = raw.replace(/```json|```/g, "").trim();
   const parsed = JSON.parse(cleaned);
-
   return {
     shortSummary: parsed.shortSummary ?? "",
     detailedSummary: parsed.detailedSummary ?? "",
@@ -73,6 +65,35 @@ function parseJsonResponse(raw: string): SummaryResult {
   };
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * ดึง retryDelay จาก Gemini 429 error body (มีค่า retryDelay: "5s" มาใน error)
+ * ถ้า parse ไม่ได้ให้ใช้ defaultMs
+ */
+function parseRetryDelay(errorBody: string, defaultMs: number): number {
+  try {
+    const json = JSON.parse(errorBody);
+    const delays: string[] = [];
+    // Gemini error format: error.details[].metadata.retryDelay = "5s"
+    for (const detail of json?.error?.details ?? []) {
+      const d = detail?.metadata?.retryDelay ?? detail?.retryDelay;
+      if (typeof d === "string") delays.push(d);
+    }
+    if (delays.length > 0) {
+      const seconds = parseInt(delays[0].replace("s", ""), 10);
+      if (!isNaN(seconds)) return seconds * 1000 + 500; // บวก 500ms buffer
+    }
+  } catch {
+    // ถ้า parse ไม่ได้ใช้ default
+  }
+  return defaultMs;
+}
+
+// Gemini free tier: 5 req/min → retry สูงสุด 3 ครั้ง ด้วย delay จาก error หรือ backoff
+const GEMINI_MAX_RETRIES = 3;
+const GEMINI_BASE_RETRY_DELAY_MS = 13000; // 13 วิ > 12 วิ (60/5) เผื่อ buffer
+
 async function callGemini(
   title: string,
   content: string,
@@ -81,32 +102,51 @@ async function callGemini(
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY ไม่ได้ตั้งค่าไว้");
 
-  const model = "gemini-1.5-flash";
+  const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(title, content, category)}` }],
-        },
-      ],
-      generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
-    }),
+  const body = JSON.stringify({
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(title, content, category)}` }],
+      },
+    ],
+    generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
   });
 
-  if (!res.ok) {
-    throw new Error(`Gemini API error: ${res.status} ${await res.text()}`);
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < GEMINI_MAX_RETRIES; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+
+    if (res.status === 429) {
+      const errText = await res.text();
+      const waitMs = parseRetryDelay(errText, GEMINI_BASE_RETRY_DELAY_MS * (attempt + 1));
+      console.warn(
+        `[aiProvider] Gemini 429 rate limit (attempt ${attempt + 1}/${GEMINI_MAX_RETRIES}) — รอ ${waitMs / 1000}s`
+      );
+      lastError = new Error(`Gemini 429: ${errText}`);
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!res.ok) {
+      throw new Error(`Gemini API error: ${res.status} ${await res.text()}`);
+    }
+
+    const data = (await res.json()) as GeminiGenerateContentResponse;
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const tokensUsed = data?.usageMetadata?.totalTokenCount ?? null;
+
+    return { result: parseJsonResponse(text), model, tokensUsed };
   }
 
-  const data = (await res.json()) as GeminiGenerateContentResponse;
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  const tokensUsed = data?.usageMetadata?.totalTokenCount ?? null;
-
-  return { result: parseJsonResponse(text), model, tokensUsed };
+  throw lastError ?? new Error("Gemini: เกินจำนวน retry สูงสุด");
 }
 
 async function callOpenAI(
@@ -149,7 +189,8 @@ async function callOpenAI(
 
 /**
  * เรียก AI ตาม provider ที่ตั้งไว้ใน env (AI_PROVIDER)
- * มี retry 1 ครั้งถ้า parse JSON ล้มเหลว (AI ตอบมาไม่ตรง schema)
+ * 429 rate limit: retry อัตโนมัติด้วย delay จาก error response
+ * JSON parse fail: retry 1 ครั้งทันที
  */
 export async function summarizeWithAI(
   title: string,
@@ -162,7 +203,9 @@ export async function summarizeWithAI(
   try {
     return await call(title, content, category);
   } catch (err) {
-    // retry รอบเดียว เผื่อ network/transient error หรือ JSON parse พลาดรอบแรก
+    // retry รอบเดียวสำหรับ JSON parse error หรือ transient network error
+    // (429 ถูกจัดการใน callGemini loop แล้ว ไม่ต้อง retry ซ้ำที่นี่)
+    if (err instanceof Error && err.message.includes("429")) throw err;
     return await call(title, content, category);
   }
 }
