@@ -13,17 +13,28 @@ export const dynamic = "force-dynamic";
 
 const JOB_NAME = "run-full-pipeline" as const;
 
+/**
+ * BullMQ repeatable scheduler jobs live in delayed state and have ids such as:
+ * repeat:daily-pipeline-trigger:1234567890
+ * They are future scheduled runs, not a currently running/manual dashboard job.
+ */
+function isManualJob(jobId: string | undefined): boolean {
+  return !!jobId && !jobId.startsWith("repeat:");
+}
+
 export async function POST() {
   try {
     const queue = getPipelineQueue();
 
-    // กันคนกดปุ่มรัวๆ — ถ้ามี job ของ pipeline เดียวกันที่ยัง waiting/active อยู่
-    // ไม่ enqueue ซ้ำ ให้คืน job เดิมไปเลย
+    // กันคนกดปุ่มรัวๆ — เช็คเฉพาะ manual job ที่ยังรอ/กำลังรันอยู่จริง
+    // ห้ามนับ repeatable delayed job ของ scheduler เป็น already_running
     const [waiting, active] = await Promise.all([
       queue.getJobs(["waiting", "delayed"]),
       queue.getJobs(["active"]),
     ]);
-    const pending = [...waiting, ...active].find((j) => j.name === JOB_NAME);
+    const pending = [...waiting, ...active].find(
+      (j) => j.name === JOB_NAME && isManualJob(j.id)
+    );
 
     if (pending) {
       return NextResponse.json(
@@ -63,11 +74,13 @@ export async function GET() {
     const [active, waiting, completed, failed] = await Promise.all([
       queue.getJobs(["active"]),
       queue.getJobs(["waiting", "delayed"]),
-      queue.getJobs(["completed"], 0, 0), // เอาแค่ตัวล่าสุด
+      queue.getJobs(["completed"], 0, 0),
       queue.getJobs(["failed"], 0, 0),
     ]);
 
-    const runningJob = [...active, ...waiting].find((j) => j.name === JOB_NAME);
+    const runningJob = [...active, ...waiting].find(
+      (j) => j.name === JOB_NAME && isManualJob(j.id)
+    );
 
     if (runningJob) {
       return NextResponse.json({
@@ -76,8 +89,12 @@ export async function GET() {
       });
     }
 
-    const latestCompleted = completed.find((j) => j.name === JOB_NAME);
-    const latestFailed = failed.find((j) => j.name === JOB_NAME);
+    const latestCompleted = completed.find(
+      (j) => j.name === JOB_NAME && isManualJob(j.id)
+    );
+    const latestFailed = failed.find(
+      (j) => j.name === JOB_NAME && isManualJob(j.id)
+    );
 
     // เทียบเวลาว่าตัวไหนล่าสุด ระหว่าง completed กับ failed
     if (latestFailed && (!latestCompleted || latestFailed.timestamp > latestCompleted.timestamp)) {
