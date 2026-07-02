@@ -17,7 +17,7 @@ const JOB_NAME = "run-full-pipeline";
 const LEGACY_JOB_NAME = "daily-pipeline-trigger";
 
 // cron pattern: นาที ชั่วโมง วัน เดือน วัน-ในสัปดาห์
-// "0 6 * * *" = ทุกวัน 06:00 (ใช้ TZ env ของ container กำหนด timezone จริง
+// "0 18 * * *" = ทุกวัน 18:00 (ใช้ TZ env ของ container กำหนด timezone จริง
 // docker-compose ตั้ง TZ=Asia/Bangkok ให้ container นี้แล้ว)
 const CRON_PATTERN = process.env.PIPELINE_CRON ?? "0 6 * * *";
 
